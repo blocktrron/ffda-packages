@@ -1,0 +1,83 @@
+#!/usr/bin/lua
+
+local json = require 'jsonc'
+local uci = require('simple-uci').cursor()
+local iwinfo = require 'iwinfo'
+local ddutil = require 'ffda-domain-director.util'
+
+
+-- https://github.com/FreifunkHochstift/ffho-packages/blob/master/ffho/ffho-autoupdater-wifi-fallback/luasrc/usr/lib/lua/autoupdater-wifi-fallback/util.lua#L5
+function get_available_wifi_networks()
+  local radios = {}
+
+  uci:foreach('wireless', 'wifi-device',
+    function(s)
+      radios[s['.name']] = {}
+    end
+  )
+
+  for radio, _ in pairs(radios) do
+    local wifitype = iwinfo.type(radio)
+    local iw = iwinfo[wifitype]
+    if not iw then
+      return null
+	end
+    local tmplist = iw.scanlist(radio)
+    for _, net in ipairs(tmplist) do
+      if net.ssid and net.bssid then
+        table.insert (radios[radio], net)
+      end
+    end
+  end
+
+  return radios
+end
+
+function generate_wifi_json(wifis)
+  wifi_table = {}
+  for k, v in pairs(wifis) do
+    for _, wifi in ipairs(v) do
+      local single_network = {}
+      single_network["bssid"] = wifi.bssid
+      single_network["signal"] = wifi.signal
+      table.insert(wifi_table, single_network)
+    end
+  end
+  return json.stringify(wifi_table)
+end
+
+-- https://gist.github.com/ignisdesign/4323051
+function urlencode(str)
+   if (str) then
+     str = string.gsub (str, "\n", "\r\n")
+     str = string.gsub (str, "([^%w ])", function (c) return string.format ("%%%02X", string.byte(c)) end)
+     str = string.gsub (str, " ", "+")
+   end
+   return str
+end
+
+function get_location(networks)
+  local wifi_json = generate_wifi_json(get_available_wifi_networks())
+  local handle = io.popen("wget -T 30 -qO -  --post-data=wifis=" ..urlencode(wifi_json) .. " http://saturn.blocktrron.ovh:9466")
+  local return_str =  handle:read("*a")
+  handle:close()
+  return return_str
+end
+
+function save_target_domain(domain_name)
+  uci:set("gluon", "core", "target_domain", domain_name)
+  uci:commit("gluon")
+end
+
+function update_domain()
+  local response = get_location()
+  local domain = json.parse(response).domain
+  if ddutil.check_domain_exists(domain) then
+    print("Domain "..domain.." is valid, setting as proposed domain")
+    save_target_domain(domain)
+  else
+    print("Domain "..domain.." is invalid, aborting")
+  end
+end
+
+update_domain()

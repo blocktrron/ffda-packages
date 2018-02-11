@@ -1,0 +1,15 @@
+#!/usr/bin/lua
+
+local uci = require('simple-uci').cursor()
+local ddutil = require 'ffda-domain-director.util'
+
+
+function switch_domain()
+  local target_domain = uci:get("gluon", "core", "target_domain")
+  if ddutil.check_domain_exists(target_domain) then
+    uci:set("gluon", "core", "domain", target_domain)
+    uci:commit("gluon")
+  end
+end
+
+switch_domain()
